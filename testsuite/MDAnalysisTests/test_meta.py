@@ -29,6 +29,7 @@ def test_import():
                 'first to run the tests, e.g. "pip install mdanalysis"')
 
 
+@knownfailure
 def test_matching_versions():
     import MDAnalysis.version
     assert_(MDAnalysis.version.__version__ == MDAnalysisTests.__version__,

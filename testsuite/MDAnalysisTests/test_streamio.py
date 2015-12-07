@@ -242,7 +242,7 @@ class TestStreamIO(TestCase, RefAdKSmall):
         u = MDAnalysis.Universe(streamData.as_NamedStream('PDB'))
         assert_equal(u.atoms.n_atoms, self.ref_n_atoms)
 
-    @knownfailure()
+    @knownfailure
     def test_PDBReader(self):
         try:
             u = MDAnalysis.Universe(streamData.as_NamedStream('PDB'), permissive=False)
