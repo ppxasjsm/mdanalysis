@@ -37,6 +37,7 @@ def test_matching_versions():
             MDAnalysisTests.__version__, MDAnalysis.__version__))
 
 
+@knownfailure
 def test_version_format(version=None):
     if version is None:
         import MDAnalysis.version
