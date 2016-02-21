@@ -5,7 +5,8 @@ import logging
 import MDAnalysis
 from ..lib import util
 from ..lib.util import cached
-from . import groups
+from .groups import (AtomGroup, ResidueGroup, SegmentGroup,
+        Atom, Residue, Segment)
 from .topology import Topology
 
 logger = logging.getLogger("MDAnalysis.core.universe")
@@ -180,23 +181,14 @@ class Universe(object):
                                  " with parser {1} \n"
                                  "Error: {2}".format(self.filename, parser, err))
 
-        # generate Universe version of each class
-        # AG, RG, SG, A, R, S
-        self._classes = groups.make_classes()
-
-        # Put Group level stuff from topology into class
-        for attr in self._topology.attrs:
-            self._process_attr(attr)
-
         # Generate atoms, residues and segments
-        self.atoms = self._classes['atomgroup'](
-                np.arange(self._topology.n_atoms), self)
+        self.atoms = AtomGroup(np.arange(self._topology.n_atoms), self)
 
-        self.residues = self._classes['residuegroup'](
-                np.arange( self._topology.n_residues), self)
+        self.residues = ResidueGroup(
+                np.arange(self._topology.n_residues), self)
 
-        self.segments = self._classes['segmentgroup'](np.arange(
-            self._topology.n_segments), self)
+        self.segments = SegmentGroup(
+                np.arange(self._topology.n_segments), self)
 
         # Update Universe namespace with segids
         for seg in self.segments:
@@ -371,35 +363,6 @@ class Universe(object):
         del self._trajectory  # guarantees that files are closed (?)
         self._trajectory = value
 
-    def add_TopologyAttr(self, topologyattr):
-        self._topology.add_TopologyAttr(topologyattr)
-        self._process_attr(topologyattr)
-
-    def _process_attr(self, attr):
-        """Squeeze a topologyattr for its information
-
-        Grabs:
-         - Group properties (attribute access)
-         - Component properties
-         - Transplant methods
-        """
-        self._classes['group']._add_prop(attr)
-
-        for level in attr.target_levels:
-            try:
-                self._classes[level]._add_prop(attr)
-            except (KeyError, AttributeError):
-                pass
-
-        for dest in ['atom', 'residue', 'segment', 'group',
-                     'atomgroup', 'residuegroup', 'segmentgroup']:
-            try:
-                for funcname, meth in attr.transplants[dest]:
-                    setattr(self._classes[dest], funcname, meth)
-            except AttributeError:
-                # not every Attribute will have a transplant dict
-                pass
-
     # TODO: Maybe put this as a Bond attribute transplant
     # Problems: Can we transplant onto Universe?
     # Probably a smarter way to do this too, could generate
@@ -459,8 +422,7 @@ class Universe(object):
                       for a, val in f.items() if not val))
 
         # All the unique values in f are the fragments
-        AG = self._classes['atomgroup']
-        frags = tuple([AG(np.array([at.index for at in ag]), self)
+        frags = tuple([AtomGroup(np.array([at.index for at in ag]), self)
                        for ag in set(f.values())])
 
         fragdict = {}

@@ -13,56 +13,68 @@ from . import levels
 from ..exceptions import NoDataError
 
 
-def make_classes():
-    """Make a fresh copy of all Classes
+class PatchBase(object):
+    """Base class that provides instance-level patching.
 
-    Returns
-    -------
-    A dictionary with a copy of all MDA container classes
     """
-    def copy_class(newname, *parents):
-        return type(newname, tuple(parents), {})
+    def __init__(self, u):
+        # Save own plural/singular
+        if issubclass(type(self), self.level.singular):
+            self.level.order = "singular"
+        elif issubclass(type(self), self.level.plural):
+            self.level.order = "plural"
+        else:
+            raise RuntimeError("{} class doesn't inherit from either a "
+                    "singular (Atom/Residue/Segment) or plural "
+                    "(AtomGroup, ResidueGroup, SegmentGroup) "
+                    "class.".format(type(self)))
+        # Patch relevant attributes onto ourselves
+        for attr in u._topology.attrs:
+            if self.level.name in attr.target_levels:
+                self._add_prop(attr)
 
-    classdict = {}
-    GB = classdict['group'] = copy_class(
-        'Group', GroupBase)
-    AG = classdict['atomgroup'] = copy_class(
-        'AtomGroup', GB, AtomGroup)
-    RG = classdict['residuegroup'] = copy_class(
-        'ResidueGroup', GB, ResidueGroup)
-    SG = classdict['segmentgroup'] = copy_class(
-        'SegmentGroup', GB, SegmentGroup)
-    A = classdict['atom'] = copy_class(
-        'Atom', Atom)
-    R = classdict['residue'] = copy_class(
-        'Residue', Residue)
-    S = classdict['segment'] = copy_class(
-        'Segment', Segment)
+    def _add_prop(self, attr):
+        """Add attr into the namespace for this class
 
-    # Define relationships between these classes
-    # with Level objects
-    Atomlevel = levels.Level('atom', A, AG)
-    Residuelevel = levels.Level('residue', R, RG)
-    Segmentlevel = levels.Level('segment', S, SG)
+        Arguments
+        ---------
+        attr - A TopologyAttr object
+        """
+        if self.level.order == "singular":
+            prop_name = attr.singular
+        else:
+            prop_name = attr.attrname
+        setattr(self, prop_name, attr)
+        # Do we ever need to monkey-patch plain methods? Or only
+        #  property-like stuff? 
+        #self.some_method = TopologyAttr.some_method.__func__.__get__(self, self.__class__)
 
-    Atomlevel.parent = Residuelevel
-    Atomlevel.child = None
-    Residuelevel.parent = Segmentlevel
-    Residuelevel.child = Atomlevel
-    Segmentlevel.parent = None
-    Segmentlevel.child = Residuelevel
+    # __getattribute__ and __setattr__ override the defaults
+    #  from the object class, so that data descriptors are
+    #  looked for first at the instance level. The defaults are
+    #  then used if instance lookup fails.
+    def __getattribute__(self, attr):
+        try:
+            obj = object.__getattribute__(self, '__dict__')[attr]
+        except KeyError:
+            return object.__getattribute__(self, attr)
+        if hasattr(obj, '__get__'):
+            return obj.__get__(self, type(self))
+        else:
+            return object.__getattribute__(self, attr)
 
-    A.level = Atomlevel
-    AG.level = Atomlevel
-    R.level = Residuelevel
-    RG.level = Residuelevel
-    S.level = Segmentlevel
-    SG.level = Segmentlevel
+    def __setattr__(self, attr, val):
+        try:
+            obj = object.__getattribute__(self, '__dict__')[attr]
+        except KeyError:
+            return object.__setattr__(self, attr, val)
+        if hasattr(obj, '__set__'):
+            return obj.__set__(self, val)
+        else:
+            return object.__setattr__(self, attr, val)
+    
 
-    return classdict
-
-
-class GroupBase(object):
+class GroupBase(PatchBase):
     """Base class from which a Universe's Group class is built.
 
     """
@@ -71,20 +83,8 @@ class GroupBase(object):
         self._ix = ix
         self._u = u
         self._cache = dict()
-
-    @classmethod
-    def _add_prop(cls, attr):
-        """Add attr into the namespace for this class
-
-        Arguments
-        ---------
-        attr - A TopologyAttr object
-        """
-        getter = lambda self: attr.__getitem__(self)
-        setter = lambda self, values: attr.__setitem__(self, values)
-
-        setattr(cls, attr.attrname,
-                property(getter, setter, None, attr.groupdoc))
+        # This takes care of bringing in the relevant TopologyAttrs
+        super(GroupBase, self).__init__(u)
 
     def __len__(self):
         return len(self._ix)
@@ -122,7 +122,7 @@ class GroupBase(object):
             Group with elements of `self` and `other` concatenated
         
         """
-        if self.level != other.level:
+        if self.level.name != other.level.name:
             raise TypeError("Can't add different level objects")
         if not self._u is other._u:
             raise ValueError("Can't add objects from different Universe")
@@ -137,7 +137,7 @@ class GroupBase(object):
         return self.__class__(np.concatenate([self._ix, o_ix]), self._u)
 
     def __contains__(self, other):
-        if not other.level == self.level:
+        if not other.level.name == self.level.name:
             # maybe raise TypeError instead?
             # eq method raises Error for wrong comparisons
             return False
@@ -159,7 +159,7 @@ class GroupBase(object):
         return self._ix
     
 
-class AtomGroup(object):
+class AtomGroup(GroupBase):
     """A group of atoms.
 
     An AtomGroup is an ordered collection of atoms. Typically, an AtomGroup is
@@ -218,8 +218,6 @@ class AtomGroup(object):
     .. SeeAlso:: :class:`MDAnalysis.core.universe.Universe`
 
     """
-
-    level = 'atom'
 
     @property
     def atoms(self):
@@ -953,9 +951,7 @@ class AtomGroup(object):
                 np.unique(levelindices)]
 
 
-class ResidueGroup(object):
-    level = 'residue'
-
+class ResidueGroup(GroupBase):
     @property
     def atoms(self):
         """Get an AtomGroup of atoms represented in this ResidueGroup.
@@ -1108,7 +1104,7 @@ class ResidueGroup(object):
         return Bio.SeqRecord.SeqRecord(seq, **kwargs)
 
 
-class SegmentGroup(object):
+class SegmentGroup(GroupBase):
     """SegmentGroup base class.
 
     This class is used by a Universe for generating its Topology-specific
@@ -1117,8 +1113,6 @@ class SegmentGroup(object):
     SegmentGroups.
 
     """
-    level = 'segment'
-
     @property
     def atoms(self):
         """Get an AtomGroup of atoms represented in this SegmentGroup. 
@@ -1182,7 +1176,7 @@ class SegmentGroup(object):
 
 
 @functools.total_ordering
-class ComponentBase(object):
+class ComponentBase(PatchBase):
     """Base class from which a Universe's Component class is built.
 
     Components are the individual objects that are found in Groups.
@@ -1191,18 +1185,20 @@ class ComponentBase(object):
         # index of component
         self._ix = ix
         self._u = u
+        # This takes care of bringing in the relevant TopologyAttrs
+        super(ComponentBase, self).__init__(u)
 
     def __repr__(self):
         return ("<{} {}>"
                 "".format(self.level.name.capitalize(), self._ix))
 
     def __lt__(self, other):
-        if self.level != other.level:
+        if self.level.name != other.level.name:
             raise TypeError("Can't compare different level objects")
         return self._ix < other._ix
 
     def __eq__(self, other):
-        if self.level != other.level:
+        if self.level.name != other.level.name:
             raise TypeError("Can't compare different level objects")
         return self.index == other.index
 
@@ -1216,7 +1212,8 @@ class ComponentBase(object):
         Parameters
         ----------
         other : Component or Group
-            Component or Group with `other.level` same as `self.level`
+            Component or Group with `other.level.name` same as
+            `self.level.name`
 
         Returns
         -------
@@ -1224,7 +1221,7 @@ class ComponentBase(object):
             Group with elements of `self` and `other` concatenated
         
         """
-        if self.level != other.level:
+        if self.level.name != other.level.name:
             raise TypeError('Can only add Atoms or AtomGroups (not "{0}")'
                             ' to Atom'.format(other.__class__.__name__))
 
@@ -1238,21 +1235,6 @@ class ComponentBase(object):
 
         return self.level.plural(
                 np.concatenate((np.array([self._ix]), o_ix)), self._u)
-
-    @classmethod
-    def _add_prop(cls, attr):
-        """Add attr into the namespace for this class
-
-        Arguments
-        ---------
-        attr 
-            TopologyAttr object to add
-        """
-        getter = lambda self: attr.__getitem__(self)
-        setter = lambda self, values: attr.__setitem__(self, values)
-
-        setattr(cls, attr.singular,
-                property(getter, setter, None, attr.singledoc))
 
     @property
     def universe(self):
@@ -1278,8 +1260,6 @@ class Atom(ComponentBase):
     this class only includes ad-hoc methods specific to Atoms.
 
     """
-    level = 'atom'
-
     @property
     def residue(self):
         residueclass = self.level.parent.singular
@@ -1397,8 +1377,6 @@ class Residue(ComponentBase):
     Residues.
 
     """
-    level = 'residue'
-
     @property
     def atoms(self):
         atomsclass = self.level.child.plural
@@ -1420,8 +1398,6 @@ class Segment(ComponentBase):
     this class only includes ad-hoc methods specific to Segments.
 
     """
-    level = 'segment'
-
     def __getattr__(self, attr):
         if attr.startswith('r'):
             resnum = int(attr[1:]) - 1
@@ -1444,3 +1420,14 @@ class Segment(ComponentBase):
         residuesclass = self.level.child.plural
         return residuesclass(self._u._topology.resindices[self],
                              self._u)
+
+Atomlevel = levels.Level('atom', Atom, AtomGroup)
+Residuelevel = levels.Level('residue', Residue, ResidueGroup)
+Segmentlevel = levels.Level('segment', Segment, SegmentGroup)
+
+Atom.level = Atomlevel
+AtomGroup.level = Atomlevel
+Residue.level = Residuelevel
+ResidueGroup.level = Residuelevel
+Segment.level = Segmentlevel
+SegmentGroup.level = Segmentlevel

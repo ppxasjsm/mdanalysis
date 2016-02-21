@@ -62,16 +62,17 @@ class TopologyAttr(object):
         """Length of the TopologyAttr at its intrinsic level."""
         return len(self.values)
 
-    def __getitem__(self, group):
+    def __get__(self, obj, group):
         """Accepts an AtomGroup, ResidueGroup or SegmentGroup"""
         if group.level == 'atom':
-            return self.get_atoms(group)
+            return self.get_atoms(obj)
         elif group.level == 'residue':
-            return self.get_residues(group)
+            return self.get_residues(obj)
         elif group.level == 'segment':
-            return self.get_segments(group)
+            return self.get_segments(obj)
 
-    def __setitem__(self, group, values):
+    def __set__(self, obj, values):
+        group = type(obj)
         if group.level == 'atom':
             return self.set_atoms(group, values)
         elif group.level == 'residue':
